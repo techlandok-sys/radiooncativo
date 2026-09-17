@@ -14,3 +14,199 @@
   input[type="password"], input[type="url"], input[type="text"]{
     width:100%;padding:.6rem .7rem;border:1px solid #ddd;border-radius:8px;font-size:.95rem;
   }
+  input[type="file"]{width:100%;margin-top:.25rem;}
+  button{
+    margin-top:1.5rem;width:100%;padding:.75rem;background:var(--red);color:#fff;border:none;
+    border-radius:8px;font-weight:700;font-size:.95rem;cursor:pointer;
+  }
+  button:disabled{opacity:.6;cursor:not-allowed;}
+  .preview{margin-top:1rem;border-radius:8px;overflow:hidden;background:#eee;min-height:80px;}
+  .preview img{width:100%;display:block;}
+  .msg{margin-top:1rem;font-size:.9rem;padding:.6rem .8rem;border-radius:8px;display:none;}
+  .msg.ok{background:#e6f7ec;color:#0a7a3d;display:block;}
+  .msg.err{background:#fde8e8;color:#c0201f;display:block;}
+  .muted{color:var(--muted);font-size:.8rem;margin-top:.4rem;}
+  .remember{display:flex;align-items:center;gap:.4rem;margin-top:.75rem;font-weight:400;font-size:.85rem;}
+  .remember input{width:auto;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Banner publicitario · Panel</h1>
+
+    <label for="pass">Contraseña</label>
+    <input type="password" id="pass" placeholder="Contraseña del panel">
+    <label class="remember"><input type="checkbox" id="remember"> Recordar en este dispositivo</label>
+
+    <label for="link">Link del banner</label>
+    <input type="url" id="link" placeholder="https://wa.me/549...">
+
+    <label for="file">Imagen del banner</label>
+    <input type="file" id="file" accept="image/*">
+
+    <div class="preview" id="preview"></div>
+    <div class="muted" id="current-info"></div>
+
+    <button id="save">Guardar banner</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="wrap" style="margin-top:1.5rem">
+    <h1>Instagram · configuración inicial</h1>
+    <p class="muted" style="margin-top:-.5rem">
+      Esto se hace UNA sola vez (o si algún día el feed deja de actualizarse).
+      Generá un token nuevo en Meta Developers → DroneSummit → API de Instagram →
+      Configuración de la API con inicio de sesión de Instagram → "Generar token", y pegalo acá apenas lo copies (dura ~1 hora).
+    </p>
+    <label for="igtoken">Token corto de Instagram</label>
+    <input type="text" id="igtoken" placeholder="IGAA...">
+    <button id="igsave">Cargar token</button>
+    <div class="msg" id="igmsg"></div>
+  </div>
+
+<script>
+const API_BASE = "https://radiooncativo.vercel.app";
+
+const $ = (id) => document.getElementById(id);
+const passInput = $('pass');
+const rememberInput = $('remember');
+const linkInput = $('link');
+const fileInput = $('file');
+const preview = $('preview');
+const msg = $('msg');
+const saveBtn = $('save');
+const currentInfo = $('current-info');
+
+const savedPass = localStorage.getItem('banner_admin_pass');
+if (savedPass) { passInput.value = savedPass; rememberInput.checked = true; }
+
+let pendingImage = null;
+
+async function loadCurrent() {
+  try {
+    const res = await fetch(`${API_BASE}/api/banner`, { cache: 'no-store' });
+    const data = await res.json();
+    if (data && data.image) {
+      preview.innerHTML = `<img src="${data.image}" alt="banner actual">`;
+      currentInfo.textContent = 'Banner actual — se reemplaza al guardar uno nuevo.';
+    }
+    if (data && data.link) linkInput.value = data.link;
+  } catch (e) {
+    currentInfo.textContent = 'No se pudo cargar el banner actual (revisá API_BASE en el código).';
+  }
+}
+loadCurrent();
+
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    pendingImage = { base64: dataUrl.split(',')[1], type: file.type };
+    preview.innerHTML = `<img src="${dataUrl}" alt="preview">`;
+  };
+  reader.readAsDataURL(file);
+});
+
+saveBtn.addEventListener('click', async () => {
+  msg.className = 'msg';
+  msg.textContent = '';
+
+  if (!passInput.value) {
+    msg.className = 'msg err';
+    msg.textContent = 'Ingresá la contraseña.';
+    return;
+  }
+
+  if (rememberInput.checked) {
+    localStorage.setItem('banner_admin_pass', passInput.value);
+  } else {
+    localStorage.removeItem('banner_admin_pass');
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Guardando...';
+
+  try {
+    const body = { link: linkInput.value.trim() };
+    if (pendingImage) {
+      body.imageBase64 = pendingImage.base64;
+      body.imageType = pendingImage.type;
+    }
+
+    const res = await fetch(`${API_BASE}/api/banner`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-password': passInput.value,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Error al guardar');
+    }
+
+    msg.className = 'msg ok';
+    msg.textContent = 'Banner actualizado correctamente.';
+    pendingImage = null;
+  } catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = err.message;
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Guardar banner';
+  }
+});
+
+const igTokenInput = $('igtoken');
+const igSaveBtn = $('igsave');
+const igMsg = $('igmsg');
+
+igSaveBtn.addEventListener('click', async () => {
+  igMsg.className = 'msg';
+  igMsg.textContent = '';
+
+  if (!passInput.value) {
+    igMsg.className = 'msg err';
+    igMsg.textContent = 'Ingresá la contraseña arriba.';
+    return;
+  }
+  if (!igTokenInput.value.trim()) {
+    igMsg.className = 'msg err';
+    igMsg.textContent = 'Pegá el token de Instagram.';
+    return;
+  }
+
+  igSaveBtn.disabled = true;
+  igSaveBtn.textContent = 'Cargando...';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/instagram-setup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-password': passInput.value,
+      },
+      body: JSON.stringify({ shortLivedToken: igTokenInput.value.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al cargar el token');
+
+    igMsg.className = 'msg ok';
+    igMsg.textContent = 'Token cargado. El feed de Instagram ya debería funcionar y renovarse solo.';
+    igTokenInput.value = '';
+  } catch (err) {
+    igMsg.className = 'msg err';
+    igMsg.textContent = err.message;
+  } finally {
+    igSaveBtn.disabled = false;
+    igSaveBtn.textContent = 'Cargar token';
+  }
+});
+</script>
+</body>
+</html>
