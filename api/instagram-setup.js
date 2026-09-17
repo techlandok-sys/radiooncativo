@@ -27,23 +27,22 @@ module.exports = async (req, res) => {
       res.status(400).json({ error: 'Falta el token' });
       return;
     }
-    if (!process.env.IG_APP_SECRET) {
-      res.status(500).json({ error: 'Falta configurar IG_APP_SECRET en Vercel' });
-      return;
-    }
 
-    const exchangeUrl = `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${process.env.IG_APP_SECRET}&access_token=${shortLivedToken}`;
-    const r = await fetch(exchangeUrl);
-    const data = await r.json();
+    // Los tokens generados desde "Generar token" en el App Dashboard ya vienen
+    // de larga duración (60 días), así que no hace falta canjearlos. Solo
+    // verificamos que funcionen antes de guardarlos.
+    const checkUrl = `https://graph.instagram.com/me?fields=user_id,username&access_token=${shortLivedToken}`;
+    const checkRes = await fetch(checkUrl);
+    const checkData = await checkRes.json();
 
-    if (!data.access_token) {
-      res.status(400).json({ error: (data.error && data.error.message) || 'No se pudo canjear el token. Probablemente ya venció (duran ~1 hora) — generá uno nuevo en Meta Developers.' });
+    if (checkData.error) {
+      res.status(400).json({ error: checkData.error.message || 'El token no es válido' });
       return;
     }
 
     const tokenData = {
-      token: data.access_token,
-      expiresAt: Date.now() + data.expires_in * 1000,
+      token: shortLivedToken,
+      expiresAt: Date.now() + 60 * 24 * 60 * 60 * 1000, // 60 días
     };
 
     await put('ig-token.json', JSON.stringify(tokenData), {
@@ -54,7 +53,7 @@ module.exports = async (req, res) => {
       cacheControlMaxAge: 0,
     });
 
-    res.status(200).json({ ok: true, expiresAt: tokenData.expiresAt });
+    res.status(200).json({ ok: true, expiresAt: tokenData.expiresAt, username: checkData.username });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
