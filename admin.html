@@ -28,6 +28,14 @@
   .muted{color:var(--muted);font-size:.8rem;margin-top:.4rem;}
   .remember{display:flex;align-items:center;gap:.4rem;margin-top:.75rem;font-weight:400;font-size:.85rem;}
   .remember input{width:auto;}
+  .banner-item{display:flex;align-items:center;gap:.75rem;padding:.6rem 0;border-bottom:1px solid #f0f0f0;}
+  .banner-item img{width:60px;height:60px;object-fit:cover;border-radius:6px;background:#eee;flex-shrink:0;}
+  .banner-item .info{flex:1;min-width:0;font-size:.82rem;}
+  .banner-item .info a{color:#333;text-decoration:none;word-break:break-all;}
+  .banner-item button{
+    margin:0;width:auto;padding:.4rem .7rem;background:#fff;color:#c0201f;border:1px solid #f0c0c0;
+    border-radius:6px;font-size:.8rem;font-weight:600;
+  }
 </style>
 </head>
 <body>
@@ -38,17 +46,19 @@
     <input type="password" id="pass" placeholder="Contraseña del panel">
     <label class="remember"><input type="checkbox" id="remember"> Recordar en este dispositivo</label>
 
-    <label for="link">Link del banner</label>
+    <label for="link">Link de este banner</label>
     <input type="url" id="link" placeholder="https://wa.me/549...">
 
     <label for="file">Imagen del banner</label>
     <input type="file" id="file" accept="image/*">
 
     <div class="preview" id="preview"></div>
-    <div class="muted" id="current-info"></div>
 
-    <button id="save">Guardar banner</button>
+    <button id="save">Agregar banner</button>
     <div class="msg" id="msg"></div>
+
+    <h2 style="font-size:1rem;margin-top:2rem">Banners cargados</h2>
+    <div id="bannerList" class="muted">Cargando...</div>
   </div>
 
   <div class="wrap" style="margin-top:1.5rem">
@@ -75,27 +85,62 @@ const fileInput = $('file');
 const preview = $('preview');
 const msg = $('msg');
 const saveBtn = $('save');
-const currentInfo = $('current-info');
+const bannerList = $('bannerList');
 
 const savedPass = localStorage.getItem('banner_admin_pass');
 if (savedPass) { passInput.value = savedPass; rememberInput.checked = true; }
 
 let pendingImage = null;
 
-async function loadCurrent() {
+function renderBanners(banners) {
+  if (!banners || !banners.length) {
+    bannerList.innerHTML = 'Todavía no cargaste ningún banner.';
+    return;
+  }
+  bannerList.innerHTML = banners.map((b) => `
+    <div class="banner-item">
+      <img src="${b.image}" alt="banner">
+      <div class="info">
+        <a href="${b.link || '#'}" target="_blank" rel="noopener">${b.link || '(sin link)'}</a>
+      </div>
+      <button data-id="${b.id}">Borrar</button>
+    </div>
+  `).join('');
+
+  bannerList.querySelectorAll('button[data-id]').forEach((btn) => {
+    btn.addEventListener('click', () => deleteBanner(btn.getAttribute('data-id')));
+  });
+}
+
+async function loadBanners() {
   try {
     const res = await fetch(`${API_BASE}/api/banner`, { cache: 'no-store' });
     const data = await res.json();
-    if (data && data.image) {
-      preview.innerHTML = `<img src="${data.image}" alt="banner actual">`;
-      currentInfo.textContent = 'Banner actual — se reemplaza al guardar uno nuevo.';
-    }
-    if (data && data.link) linkInput.value = data.link;
+    renderBanners(data.banners || []);
   } catch (e) {
-    currentInfo.textContent = 'No se pudo cargar el banner actual (revisá API_BASE en el código).';
+    bannerList.textContent = 'No se pudo cargar la lista (revisá API_BASE en el código).';
   }
 }
-loadCurrent();
+loadBanners();
+
+async function deleteBanner(id) {
+  if (!passInput.value) {
+    alert('Ingresá la contraseña arriba primero.');
+    return;
+  }
+  if (!confirm('¿Borrar este banner?')) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/banner?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'x-admin-password': passInput.value },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error al borrar');
+    renderBanners(data.banners || []);
+  } catch (err) {
+    alert(err.message);
+  }
+}
 
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
@@ -118,6 +163,11 @@ saveBtn.addEventListener('click', async () => {
     msg.textContent = 'Ingresá la contraseña.';
     return;
   }
+  if (!pendingImage) {
+    msg.className = 'msg err';
+    msg.textContent = 'Elegí una imagen.';
+    return;
+  }
 
   if (rememberInput.checked) {
     localStorage.setItem('banner_admin_pass', passInput.value);
@@ -129,36 +179,35 @@ saveBtn.addEventListener('click', async () => {
   saveBtn.textContent = 'Guardando...';
 
   try {
-    const body = { link: linkInput.value.trim() };
-    if (pendingImage) {
-      body.imageBase64 = pendingImage.base64;
-      body.imageType = pendingImage.type;
-    }
-
     const res = await fetch(`${API_BASE}/api/banner`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-admin-password': passInput.value,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        imageBase64: pendingImage.base64,
+        imageType: pendingImage.type,
+        link: linkInput.value.trim(),
+      }),
     });
 
     const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.error || 'Error al guardar');
-    }
+    if (!res.ok) throw new Error(data.error || 'Error al guardar');
 
     msg.className = 'msg ok';
-    msg.textContent = 'Banner actualizado correctamente.';
+    msg.textContent = 'Banner agregado correctamente.';
     pendingImage = null;
+    preview.innerHTML = '';
+    fileInput.value = '';
+    linkInput.value = '';
+    renderBanners(data.banners || []);
   } catch (err) {
     msg.className = 'msg err';
     msg.textContent = err.message;
   } finally {
     saveBtn.disabled = false;
-    saveBtn.textContent = 'Guardar banner';
+    saveBtn.textContent = 'Agregar banner';
   }
 });
 
